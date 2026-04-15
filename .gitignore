@@ -1,0 +1,18 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+aitoll
+aitoll-*
+
+# Build output
+dist/
+
+# Claude Code internals
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
