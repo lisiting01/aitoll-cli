@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -30,4 +31,13 @@ func EnsureConfigDir() error {
 		return err
 	}
 	return os.MkdirAll(dir, 0700)
+}
+
+// ClaudeSettingsPath returns the path to ~/.claude/settings.json.
+func ClaudeSettingsPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(home, ".claude", "settings.json"), nil
 }
