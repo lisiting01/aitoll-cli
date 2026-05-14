@@ -61,35 +61,35 @@ type claudeSettings struct {
 	Env map[string]string `json:"env"`
 }
 
-// readPasscardAPIKey reads the active passcard API key from ~/.claude/settings.json.
+// readPasscardAPIKey reads the active passcard API key.
+// Lookup order: ~/.claude/settings.json → ANTHROPIC_AUTH_TOKEN env var.
 func readPasscardAPIKey() (string, error) {
 	settingsPath, err := config.ClaudeSettingsPath()
-	if err != nil {
-		return "", err
-	}
-
-	data, err := os.ReadFile(settingsPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("~/.claude/settings.json not found — no active API key configured")
+	if err == nil {
+		data, err := os.ReadFile(settingsPath)
+		if err == nil {
+			var settings claudeSettings
+			if jsonErr := json.Unmarshal(data, &settings); jsonErr == nil {
+				if apiKey := settings.Env["ANTHROPIC_AUTH_TOKEN"]; apiKey != "" {
+					if !strings.HasPrefix(apiKey, "pass_") {
+						return "", fmt.Errorf("ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json is not a passcard key (expected pass_...)")
+					}
+					return apiKey, nil
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to read ~/.claude/settings.json: %w", err)
 		}
-		return "", fmt.Errorf("failed to read ~/.claude/settings.json: %w", err)
 	}
 
-	var settings claudeSettings
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return "", fmt.Errorf("failed to parse ~/.claude/settings.json: %w", err)
+	if apiKey := os.Getenv("ANTHROPIC_AUTH_TOKEN"); apiKey != "" {
+		if !strings.HasPrefix(apiKey, "pass_") {
+			return "", fmt.Errorf("ANTHROPIC_AUTH_TOKEN environment variable is not a passcard key (expected pass_...)")
+		}
+		return apiKey, nil
 	}
 
-	apiKey := settings.Env["ANTHROPIC_AUTH_TOKEN"]
-	if apiKey == "" {
-		return "", fmt.Errorf("ANTHROPIC_AUTH_TOKEN not set in ~/.claude/settings.json")
-	}
-	if !strings.HasPrefix(apiKey, "pass_") {
-		return "", fmt.Errorf("ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json is not a passcard key (expected pass_...)")
-	}
-
-	return apiKey, nil
+	return "", fmt.Errorf("no passcard API key found: set ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json or as an environment variable")
 }
 
 // resolvePasscardID reads the active API key and resolves it to a passcard ID via the platform API.
