@@ -319,3 +319,189 @@ func (c *Client) GetCurrentPasscard(apiKey string) (*Passcard, error) {
 
 	return result.Data, nil
 }
+
+// =============================================================================
+// codex-auth (lease 租赁池) — v0.7.0+
+// =============================================================================
+
+// LeaseRequest is the body sent to POST /api/codex-auth/lease.
+type LeaseRequest struct {
+	Duration string `json:"duration,omitempty"` // "7d" / "14d" / "30d"; default 14d
+	Force    bool   `json:"force,omitempty"`
+}
+
+// LeaseOpenAIInfo carries the OpenAI account credentials shown to the user
+// once at lease time. Password is null when admin hasn't set one.
+type LeaseOpenAIInfo struct {
+	Email       string  `json:"email"`
+	Password    *string `json:"password"`
+	AccountType string  `json:"accountType"`
+}
+
+// LeaseData is the success payload of /api/codex-auth/lease.
+type LeaseData struct {
+	LeaseID   string                 `json:"leaseId"`
+	ExpiresAt string                 `json:"expiresAt"`
+	RefreshAt string                 `json:"refreshAt,omitempty"`
+	OpenAI    LeaseOpenAIInfo        `json:"openai"`
+	AuthJSON  map[string]interface{} `json:"authJson"`
+}
+
+// EnvelopeError is parsed when an envelope-style endpoint returns success=false.
+type EnvelopeError struct {
+	Code    string // body.error
+	Message string // body.message (optional)
+	Status  int    // HTTP status
+}
+
+func (e *EnvelopeError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s (%s, http %d)", e.Message, e.Code, e.Status)
+	}
+	return fmt.Sprintf("%s (http %d)", e.Code, e.Status)
+}
+
+// LeaseAccount calls POST /api/codex-auth/lease.
+func (c *Client) LeaseAccount(token string, req LeaseRequest) (*LeaseData, error) {
+	var resp struct {
+		Success bool       `json:"success"`
+		Data    *LeaseData `json:"data,omitempty"`
+		Error   string     `json:"error,omitempty"`
+		Message string     `json:"message,omitempty"`
+	}
+	status, err := c.doJSONEnvelope(token, "POST", "/api/codex-auth/lease", req, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, &EnvelopeError{Code: resp.Error, Message: resp.Message, Status: status}
+	}
+	return resp.Data, nil
+}
+
+// ReleaseLease calls POST /api/codex-auth/release.
+// hadActiveLease==false means the user had no active lease (no-op release).
+// alreadyExpired==true means the lease was past its expiresAt before release.
+func (c *Client) ReleaseLease(token string) (alreadyExpired bool, hadActiveLease bool, err error) {
+	var resp struct {
+		Success bool `json:"success"`
+		Data    *struct {
+			ReleasedAt     string `json:"releasedAt"`
+			AlreadyExpired bool   `json:"alreadyExpired"`
+		} `json:"data"`
+		Error   string `json:"error,omitempty"`
+		Message string `json:"message,omitempty"`
+	}
+	status, err := c.doJSONEnvelope(token, "POST", "/api/codex-auth/release", struct{}{}, &resp)
+	if err != nil {
+		return false, false, err
+	}
+	if !resp.Success {
+		return false, false, &EnvelopeError{Code: resp.Error, Message: resp.Message, Status: status}
+	}
+	if resp.Data == nil {
+		return false, false, nil
+	}
+	return resp.Data.AlreadyExpired, true, nil
+}
+
+// CodexAuthStatus is the result of GET /api/codex-auth/status.
+type CodexAuthStatus struct {
+	Active          bool   `json:"active"`
+	LeaseID         string `json:"leaseId,omitempty"`
+	OpenAIEmail     string `json:"openaiEmail,omitempty"`
+	AccountType     string `json:"accountType,omitempty"`
+	LeasedAt        string `json:"leasedAt,omitempty"`
+	ExpiresAt       string `json:"expiresAt,omitempty"`
+	LastRefreshedAt string `json:"lastRefreshedAt,omitempty"`
+}
+
+// GetCodexAuthStatus calls GET /api/codex-auth/status.
+func (c *Client) GetCodexAuthStatus(token string) (*CodexAuthStatus, error) {
+	var resp struct {
+		Success bool             `json:"success"`
+		Data    *CodexAuthStatus `json:"data"`
+		Error   string           `json:"error,omitempty"`
+		Message string           `json:"message,omitempty"`
+	}
+	status, err := c.doJSONEnvelope(token, "GET", "/api/codex-auth/status", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, &EnvelopeError{Code: resp.Error, Message: resp.Message, Status: status}
+	}
+	return resp.Data, nil
+}
+
+// RefreshData is the success payload of /api/codex-auth/refresh.
+type RefreshData struct {
+	AuthJSON    map[string]interface{} `json:"authJson"`
+	RefreshedAt string                 `json:"refreshedAt"`
+	ExpiresAt   string                 `json:"expiresAt"`
+}
+
+// RefreshLease calls POST /api/codex-auth/refresh.
+func (c *Client) RefreshLease(token string) (*RefreshData, error) {
+	var resp struct {
+		Success bool         `json:"success"`
+		Data    *RefreshData `json:"data"`
+		Error   string       `json:"error,omitempty"`
+		Message string       `json:"message,omitempty"`
+	}
+	status, err := c.doJSONEnvelope(token, "POST", "/api/codex-auth/refresh", struct{}{}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, &EnvelopeError{Code: resp.Error, Message: resp.Message, Status: status}
+	}
+	return resp.Data, nil
+}
+
+// doJSONEnvelope performs a JSON request/response cycle for endpoints that
+// follow the envelope pattern. body may be nil; out must be a pointer.
+// Returns the HTTP status code and any transport-level error.
+func (c *Client) doJSONEnvelope(
+	token, method, path string,
+	body interface{},
+	out interface{},
+) (int, error) {
+	url := c.baseURL + path
+
+	var bodyReader io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return 0, fmt.Errorf("marshal request: %w", err)
+		}
+		bodyReader = bytes.NewReader(buf)
+	}
+
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, fmt.Errorf("read response: %w", err)
+	}
+	if len(respBody) == 0 {
+		return resp.StatusCode, fmt.Errorf("backend returned empty body (http %d)", resp.StatusCode)
+	}
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return resp.StatusCode, fmt.Errorf("parse response (http %d): %w; body: %s", resp.StatusCode, err, truncate(string(respBody), 200))
+	}
+	return resp.StatusCode, nil
+}
