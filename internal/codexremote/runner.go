@@ -13,13 +13,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/lisiting01/aitoll-cli/internal/proxy"
 )
 
 // State persisted alongside the PID file.
 type State struct {
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"started_at"`
-	Proxy     string    `json:"proxy"`
+	PID         int       `json:"pid"`
+	StartedAt   time.Time `json:"started_at"`
+	Proxy       string    `json:"proxy"`
+	ProxySource string    `json:"proxy_source,omitempty"`
 }
 
 // StartOptions controls how Start launches the daemon.
@@ -169,10 +172,22 @@ func Start(opts StartOptions) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
-	proxy := opts.Proxy
-	if proxy == "" {
-		proxy = cfg.Proxy
+
+	// Smart proxy resolution: explicit --proxy flag > config value > smart fallback
+	// (probe local proxy software; if none, start the aitoll proxy daemon).
+	override := opts.Proxy
+	if override == "" {
+		override = cfg.Proxy
 	}
+	resolved, rErr := proxy.Resolve(proxy.ResolveOptions{
+		Override:        override,
+		AutoStartDaemon: true,
+	})
+	if rErr != nil {
+		return nil, fmt.Errorf("resolve proxy: %w", rErr)
+	}
+	proxyURL := resolved.URL
+	proxySource := string(resolved.Source)
 
 	if err := EnsureDir(); err != nil {
 		return nil, err
@@ -193,9 +208,9 @@ func Start(opts StartOptions) (*State, error) {
 
 	cmd := exec.Command(codexPath, "remote-control", "--enable", "remote_control")
 	cmd.Env = append(os.Environ(),
-		"HTTP_PROXY="+proxy,
-		"HTTPS_PROXY="+proxy,
-		"ALL_PROXY="+proxy,
+		"HTTP_PROXY="+proxyURL,
+		"HTTPS_PROXY="+proxyURL,
+		"ALL_PROXY="+proxyURL,
 	)
 	if opts.Debug {
 		cmd.Env = append(cmd.Env, "RUST_LOG=codex=debug,codex_app_server=debug,codex_app_server_transport=debug,info")
@@ -213,9 +228,10 @@ func Start(opts StartOptions) (*State, error) {
 	go func() { _ = cmd.Wait() }()
 
 	state := &State{
-		PID:       cmd.Process.Pid,
-		StartedAt: time.Now(),
-		Proxy:     proxy,
+		PID:         cmd.Process.Pid,
+		StartedAt:   time.Now(),
+		Proxy:       proxyURL,
+		ProxySource: proxySource,
 	}
 	if err := saveState(state); err != nil {
 		// We started the process but failed to record state. Try to kill it

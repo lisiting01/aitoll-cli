@@ -76,7 +76,7 @@ var codexRemoteConfigGetCmd = &cobra.Command{
 
 var codexRemoteConfigSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "Set a config value (key: proxy)",
+	Short: "Set a config value (key: proxy; value: URL, 'auto', or 'aitoll')",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runCodexRemoteConfigSet,
 }
@@ -110,7 +110,7 @@ func runCodexRemoteStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	logPath, _ := codexremote.LogPath()
-	fmt.Fprintf(cmd.OutOrStdout(), "Started codex-remote (PID %d, proxy %s)\n", state.PID, state.Proxy)
+	fmt.Fprintf(cmd.OutOrStdout(), "Started codex-remote (PID %d, proxy %s [%s])\n", state.PID, state.Proxy, state.ProxySource)
 	fmt.Fprintf(cmd.OutOrStdout(), "Logs: %s\n", logPath)
 	fmt.Fprintln(cmd.OutOrStdout(), "Tail logs to confirm wss connection: aitoll codex-remote logs --follow")
 	return nil
@@ -148,6 +148,9 @@ func runCodexRemoteStatus(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "  Started:    %s\n", state.StartedAt.Format(time.RFC3339))
 	fmt.Fprintf(cmd.OutOrStdout(), "  Uptime:     %s\n", uptime)
 	fmt.Fprintf(cmd.OutOrStdout(), "  Proxy:      %s\n", state.Proxy)
+	if state.ProxySource != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Source:     %s\n", state.ProxySource)
+	}
 	logPath, _ := codexremote.LogPath()
 	fmt.Fprintf(cmd.OutOrStdout(), "  Log:        %s\n", logPath)
 	return nil

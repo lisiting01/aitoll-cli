@@ -8,10 +8,19 @@ import (
 	"github.com/lisiting01/aitoll-cli/internal/config"
 )
 
-const DefaultProxy = "http://127.0.0.1:7890"
+// DefaultProxy is now empty — empty value triggers the smart resolver
+// (proxy.Resolve), which probes local proxy software and falls back to the
+// embedded aitoll proxy daemon. Pre-existing configs containing a literal
+// URL still work; users can also set "auto" or "aitoll" explicitly.
+const DefaultProxy = ""
 
 // Config holds codex-remote specific settings.
 type Config struct {
+	// Proxy is one of:
+	//   ""        — smart resolver (probe local; fall back to aitoll daemon)
+	//   "auto"    — same as ""
+	//   "aitoll"  — skip local probe, force the aitoll daemon
+	//   "http://..." — literal URL, used as-is
 	Proxy string `json:"proxy"`
 }
 

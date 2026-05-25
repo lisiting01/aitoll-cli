@@ -253,6 +253,41 @@ type CurrentPasscardResponse struct {
 	Error   string    `json:"error,omitempty"`
 }
 
+// GetProxyConfig calls GET /api/proxy/config and returns the raw sing-box
+// JSON config the backend has provisioned for this user. The CLI does not
+// interpret the body beyond a basic JSON-shape check at the caller.
+func (c *Client) GetProxyConfig(token string) ([]byte, error) {
+	url := fmt.Sprintf("%s/api/proxy/config", c.baseURL)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("backend returned %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	return body, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 // GetCurrentPasscard calls GET /api/passes/current with a passcard API key (not JWT).
 func (c *Client) GetCurrentPasscard(apiKey string) (*Passcard, error) {
 	url := fmt.Sprintf("%s/api/passes/current", c.baseURL)

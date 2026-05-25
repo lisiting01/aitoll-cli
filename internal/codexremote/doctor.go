@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/lisiting01/aitoll-cli/internal/proxy"
 )
 
 // CheckLevel mirrors the OK/WARN/INFO/ERROR labels printed to the user.
@@ -68,17 +70,29 @@ func Doctor() []CheckResult {
 		}
 	}
 
-	// 3. proxy reachability
+	// 3. proxy reachability — uses the smart resolver to mirror what `start`
+	//    will actually do. AutoStartDaemon is false: doctor only reports the
+	//    state, it doesn't spin anything up as a side effect.
 	cfg, cfgErr := LoadConfig()
-	proxy := DefaultProxy
+	override := ""
 	if cfgErr == nil {
-		proxy = cfg.Proxy
+		override = cfg.Proxy
 	}
-	latency, pErr := CheckProxy(proxy)
-	if pErr != nil {
-		results = append(results, CheckResult{LevelError, fmt.Sprintf("proxy %s unreachable: %s", proxy, pErr.Error())})
+	resolved, rErr := proxy.Resolve(proxy.ResolveOptions{
+		Override:        override,
+		AutoStartDaemon: false,
+	})
+	if rErr != nil {
+		results = append(results, CheckResult{LevelError, "proxy resolve: " + rErr.Error()})
+	} else if resolved.URL == "" {
+		results = append(results, CheckResult{LevelError, "no proxy resolved (source=" + string(resolved.Source) + ")"})
 	} else {
-		results = append(results, CheckResult{LevelOK, fmt.Sprintf("proxy %s reachable (chatgpt.com HEAD %dms)", proxy, latency.Milliseconds())})
+		latency, pErr := CheckProxy(resolved.URL)
+		if pErr != nil {
+			results = append(results, CheckResult{LevelError, fmt.Sprintf("proxy %s (%s) unreachable: %s", resolved.URL, resolved.Source, pErr.Error())})
+		} else {
+			results = append(results, CheckResult{LevelOK, fmt.Sprintf("proxy %s [source=%s] reachable (chatgpt.com HEAD %dms)", resolved.URL, resolved.Source, latency.Milliseconds())})
+		}
 	}
 
 	// 4. ~/.codex/auth.json
