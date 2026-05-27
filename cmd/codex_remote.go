@@ -44,6 +44,20 @@ var codexRemoteStopCmd = &cobra.Command{
 	RunE:  runCodexRemoteStop,
 }
 
+var codexRemoteRestartCmd = &cobra.Command{
+	Use:   "restart",
+	Short: "Stop and re-start the daemon, replaying the last start's --debug/--proxy flags",
+	Long: `Restart re-runs the most recent successful 'start' invocation.
+
+It loads the flags saved at last start (--debug, --proxy) from
+last-invocation.json, stops the running daemon if any, and re-launches with
+those same flags. The proxy is re-resolved from scratch, so a changed network
+environment (e.g. Clash off, different port) is picked up.
+
+Note: --fresh-logs is NOT replayed — restart always appends to the existing log.`,
+	RunE: runCodexRemoteRestart,
+}
+
 var codexRemoteStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show codex-remote daemon status",
@@ -86,6 +100,7 @@ func init() {
 	codexRemoteCmd.AddCommand(
 		codexRemoteStartCmd,
 		codexRemoteStopCmd,
+		codexRemoteRestartCmd,
 		codexRemoteStatusCmd,
 		codexRemoteLogsCmd,
 		codexRemoteDoctorCmd,
@@ -126,6 +141,46 @@ func runCodexRemoteStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Stopped codex-remote (PID %d)\n", pid)
+	return nil
+}
+
+func runCodexRemoteRestart(cmd *cobra.Command, args []string) error {
+	li, err := codexremote.LoadLastInvocation()
+	if err != nil {
+		return fmt.Errorf("failed to read last invocation: %w", err)
+	}
+	if li == nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "no previous start recorded; run 'aitoll codex-remote start' first")
+		os.Exit(2)
+	}
+
+	proxyDisplay := li.ProxyOverride
+	if proxyDisplay == "" {
+		proxyDisplay = "(from config)"
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Replaying last invocation (saved %s): --debug=%t --proxy=%s\n",
+		li.SavedAt.Format(time.RFC3339), li.Debug, proxyDisplay)
+
+	if state, err := codexremote.LoadState(); err == nil && codexremote.IsAlive(state.PID) {
+		stoppedPID, sErr := codexremote.Stop()
+		if sErr != nil {
+			return fmt.Errorf("failed to stop running daemon: %w", sErr)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Stopped codex-remote (PID %d)\n", stoppedPID)
+	}
+
+	state, err := codexremote.Start(codexremote.StartOptions{
+		Proxy:     li.ProxyOverride,
+		FreshLogs: false,
+		Debug:     li.Debug,
+	})
+	if err != nil {
+		return err
+	}
+	logPath, _ := codexremote.LogPath()
+	fmt.Fprintf(cmd.OutOrStdout(), "Started codex-remote (PID %d, proxy %s [%s])\n", state.PID, state.Proxy, state.ProxySource)
+	fmt.Fprintf(cmd.OutOrStdout(), "Logs: %s\n", logPath)
+	fmt.Fprintln(cmd.OutOrStdout(), "Tail logs to confirm wss connection: aitoll codex-remote logs --follow")
 	return nil
 }
 

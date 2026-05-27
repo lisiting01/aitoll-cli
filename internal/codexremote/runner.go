@@ -239,6 +239,17 @@ func Start(opts StartOptions) (*State, error) {
 		_ = killProcess(cmd.Process.Pid)
 		return nil, fmt.Errorf("started codex (PID %d) but failed to save state: %w", cmd.Process.Pid, err)
 	}
+
+	// Record last-invocation for `restart`. ProxyOverride captures the raw
+	// --proxy value (empty if the user didn't pass it). FreshLogs is
+	// deliberately not persisted: it's a one-shot side effect.
+	if err := SaveLastInvocation(&LastInvocation{
+		Debug:         opts.Debug,
+		ProxyOverride: opts.Proxy,
+		SavedAt:       time.Now(),
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save last invocation: %v\n", err)
+	}
 	return state, nil
 }
 
